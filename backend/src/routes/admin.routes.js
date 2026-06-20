@@ -2,21 +2,10 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const authMiddleware = require('../middleware/auth.middleware');
+const adminMiddleware = require('../middleware/admin.middleware');
+const auditService = require('../services/auditService');
 
-// Strict Middleware to verify Admin user type
-const adminMiddleware = async (req, res, next) => {
-  try {
-    const result = await db.query('SELECT user_type FROM users WHERE user_id = $1', [req.user.uid]);
-    if (result.rows.length === 0 || result.rows[0].user_type !== 'Admin') {
-      return res.status(403).json({ success: false, message: 'Forbidden: Security clearance level Admin required.' });
-    }
-    next();
-  } catch (err) {
-    console.error('Admin middleware error:', err.message);
-    return res.status(500).json({ success: false, message: 'Server error verifying permissions.' });
-  }
-};
-
+// Apply middleware stack: first verify authentication, then verify admin role
 router.use(authMiddleware);
 router.use(adminMiddleware);
 
@@ -42,8 +31,21 @@ router.get('/users', async (req, res) => {
  */
 router.post('/users/role', async (req, res) => {
   const { userId, role } = req.body;
+
+  // Validation
   if (!userId || !role) {
-    return res.status(400).json({ success: false, message: 'UserId and role are required.' });
+    return res.status(400).json({
+      success: false,
+      message: 'UserId and role are required.'
+    });
+  }
+
+  // Verify role is valid
+  if (!['Admin', 'User'].includes(role)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid role. Must be "Admin" or "User".'
+    });
   }
 
   try {
@@ -56,12 +58,14 @@ router.post('/users/role', async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    await db.query(
-      `INSERT INTO system_logs (user_id, action_type, details) VALUES ($1, 'updateUserRole', $2)`,
-      [req.user.uid, `Changed security role for user ${userId} to [${role.toUpperCase()}]`]
-    );
+    // Log the role change for audit trail
+    await auditService.logRoleChange(req.user.uid, userId, role);
 
-    res.json({ success: true, message: `User role securely updated to ${role}.`, data: result.rows[0] });
+    res.json({
+      success: true,
+      message: `User role securely updated to ${role}.`,
+      data: result.rows[0]
+    });
   } catch (error) {
     console.error('Admin update role error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to update user role.' });
@@ -74,14 +78,8 @@ router.post('/users/role', async (req, res) => {
  */
 router.get('/logs', async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT l.log_id, l.action_type, l.timestamp, l.details, u.name as user_name, u.email as user_email
-       FROM system_logs l
-       LEFT JOIN users u ON l.user_id = u.user_id
-       ORDER BY l.timestamp DESC
-       LIMIT 150`
-    );
-    res.json({ success: true, data: result.rows });
+    const logs = await auditService.getAuditLogs();
+    res.json({ success: true, data: logs });
   } catch (error) {
     console.error('Admin fetch logs error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to fetch system logs.' });
@@ -94,29 +92,69 @@ router.get('/logs', async (req, res) => {
  */
 router.post('/rules', async (req, res) => {
   const { ruleId, category, description, sourceReference } = req.body;
+
+  // Validation
   if (!category || !description) {
-    return res.status(400).json({ success: false, message: 'Category and description are absolutely required.' });
+    return res.status(400).json({
+      success: false,
+      message: 'Category and description are absolutely required.'
+    });
+  }
+
+  // Verify category is valid
+  const validCategories = [
+    'prohibited-sector',
+    'doubtful-sector',
+    'financial-ratio',
+    'zakat'
+  ];
+  if (!validCategories.includes(category)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid category.'
+    });
   }
 
   try {
     if (ruleId) {
+      // UPDATE existing rule
       const result = await db.query(
-        `UPDATE shariah_rules SET category = $1, description = $2, source_reference = $3 WHERE rule_id = $4 RETURNING *`,
+        `UPDATE shariah_rules 
+         SET category = $1, description = $2, source_reference = $3 
+         WHERE rule_id = $4 
+         RETURNING *`,
         [category, description, sourceReference || null, ruleId]
       );
-      
-      if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Rule not found.' });
 
-      await db.query(`INSERT INTO system_logs (user_id, action_type, details) VALUES ($1, 'updateRule', $2)`, [req.user.uid, `Updated compliance rule [${ruleId}] in category: ${category}`]);
-      return res.json({ success: true, message: 'Rule updated successfully.', data: result.rows[0] });
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Rule not found.' });
+      }
+
+      // Log the update
+      await auditService.logRuleUpdate(req.user.uid, ruleId, category);
+
+      return res.json({
+        success: true,
+        message: 'Rule updated successfully.',
+        data: result.rows[0]
+      });
     } else {
+      // CREATE new rule
       const result = await db.query(
-        `INSERT INTO shariah_rules (category, description, source_reference) VALUES ($1, $2, $3) RETURNING *`,
+        `INSERT INTO shariah_rules (category, description, source_reference) 
+         VALUES ($1, $2, $3) 
+         RETURNING *`,
         [category, description, sourceReference || null]
       );
 
-      await db.query(`INSERT INTO system_logs (user_id, action_type, details) VALUES ($1, 'createRule', $2)`, [req.user.uid, `Created new compliance rule in category: ${category}`]);
-      return res.status(201).json({ success: true, message: 'Rule deployed to engine successfully.', data: result.rows[0] });
+      // Log the creation
+      await auditService.logRuleCreate(req.user.uid, result.rows[0].rule_id, category);
+
+      return res.status(201).json({
+        success: true,
+        message: 'Rule deployed to engine successfully.',
+        data: result.rows[0]
+      });
     }
   } catch (error) {
     console.error('Admin save rule error:', error.message);
@@ -132,12 +170,23 @@ router.delete('/rules/:ruleId', async (req, res) => {
   const { ruleId } = req.params;
 
   try {
-    const result = await db.query('DELETE FROM shariah_rules WHERE rule_id = $1 RETURNING *', [ruleId]);
+    const result = await db.query(
+      'DELETE FROM shariah_rules WHERE rule_id = $1 RETURNING *',
+      [ruleId]
+    );
 
-    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Rule not found.' });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Rule not found.' });
+    }
 
-    await db.query(`INSERT INTO system_logs (user_id, action_type, details) VALUES ($1, 'deleteRule', $2)`, [req.user.uid, `Terminated compliance rule ID: ${ruleId}`]);
-    res.json({ success: true, message: 'Rule permanently deleted.', data: result.rows[0] });
+    // Log the deletion
+    await auditService.logRuleDelete(req.user.uid, ruleId);
+
+    res.json({
+      success: true,
+      message: 'Rule permanently deleted.',
+      data: result.rows[0]
+    });
   } catch (error) {
     console.error('Admin delete rule error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to delete rule.' });
