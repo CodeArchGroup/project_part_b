@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { apiUrl, authHeaders, API_CONFIG } from '../config/api';
+import { handleApiError, parseApiResponse } from '../config/errors';
+import { GOAL_STATUS, getGoalStatusColor } from '../constants/goals.constants';
 
 export default function Goals() {
   const { user } = useAuth();
@@ -11,24 +14,20 @@ export default function Goals() {
     targetAmount: '',
     currentAmount: '0',
     deadline: '',
-    status: 'active'
+    status: GOAL_STATUS.ACTIVE
   });
   const [statusMsg, setStatusMsg] = useState(null);
 
-  const API_URL = 'http://localhost:8080/api/goals';
-
   const fetchGoals = async () => {
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(API_URL, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.GOALS), {
+        headers: authHeaders()
       });
-      const data = await res.json();
-      if (data.success) {
-        setGoals(data.data);
-      }
+      const data = await parseApiResponse(res);
+      setGoals(data.data);
     } catch (err) {
       console.error('Fetch goals error:', err);
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Failed to load goals.') });
     } finally {
       setLoading(false);
     }
@@ -51,7 +50,7 @@ export default function Goals() {
       targetAmount: goal.target_amount || '',
       currentAmount: goal.current_amount || '0',
       deadline: goal.deadline ? goal.deadline.split('T')[0] : '',
-      status: goal.status || 'active'
+      status: goal.status || GOAL_STATUS.ACTIVE
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -59,21 +58,16 @@ export default function Goals() {
   const handleDelete = async (goalId) => {
     if (!window.confirm('Are you sure you want to delete this financial goal?')) return;
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(`${API_URL}/${goalId}`, {
+      const res = await fetch(`${apiUrl(API_CONFIG.ENDPOINTS.GOALS)}/${goalId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders()
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: 'Goal deleted successfully!' });
-        fetchGoals();
-      } else {
-        setStatusMsg({ type: 'error', text: data.message });
-      }
+      await parseApiResponse(res);
+      setStatusMsg({ type: 'success', text: 'Goal deleted successfully!' });
+      fetchGoals();
     } catch (err) {
       console.error('Delete goal failed:', err);
-      setStatusMsg({ type: 'error', text: 'Server connection error.' });
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Server connection error.') });
     }
   };
 
@@ -82,33 +76,25 @@ export default function Goals() {
     setStatusMsg({ type: 'loading', text: 'Saving...' });
 
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(API_URL, {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.GOALS), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders(true),
         body: JSON.stringify(formData)
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: formData.goalId ? 'Goal updated successfully!' : 'Goal created successfully!' });
-        setFormData({
-          goalId: '',
-          goalType: '',
-          targetAmount: '',
-          currentAmount: '0',
-          deadline: '',
-          status: 'active'
-        });
-        fetchGoals();
-      } else {
-        setStatusMsg({ type: 'error', text: data.message });
-      }
+      await parseApiResponse(res);
+      setStatusMsg({ type: 'success', text: formData.goalId ? 'Goal updated successfully!' : 'Goal created successfully!' });
+      setFormData({
+        goalId: '',
+        goalType: '',
+        targetAmount: '',
+        currentAmount: '0',
+        deadline: '',
+        status: GOAL_STATUS.ACTIVE
+      });
+      fetchGoals();
     } catch (err) {
       console.error('Save goal failed:', err);
-      setStatusMsg({ type: 'error', text: 'Server connection error.' });
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Server connection error.') });
     }
   };
 
@@ -117,12 +103,6 @@ export default function Goals() {
     const tar = Number(target || 1);
     const percentage = Math.min(Math.round((curr / tar) * 100), 100);
     return percentage;
-  };
-
-  const getStatusBadgeColor = (status) => {
-    if (status === 'completed') return 'var(--success)';
-    if (status === 'paused') return '#F59E0B';
-    return 'var(--primary-color)';
   };
 
   return (
@@ -210,9 +190,9 @@ export default function Goals() {
                   className="input-field"
                   style={{ fontSize: '16px', padding: '14px', borderRadius: '12px', cursor: 'pointer' }}
                 >
-                  <option value="active">🟢 Active</option>
-                  <option value="completed">✨ Completed</option>
-                  <option value="paused">⏸️ Paused</option>
+                  <option value={GOAL_STATUS.ACTIVE}>Active</option>
+                  <option value={GOAL_STATUS.COMPLETED}>Completed</option>
+                  <option value={GOAL_STATUS.PAUSED}>Paused</option>
                 </select>
               </div>
             )}
@@ -226,7 +206,7 @@ export default function Goals() {
                   type="button" 
                   className="btn" 
                   style={{ background: 'var(--surface)', border: '1px solid var(--glass-border)', color: 'var(--text-main)', padding: '16px', borderRadius: '12px' }}
-                  onClick={() => setFormData({ goalId: '', goalType: '', targetAmount: '', currentAmount: '0', deadline: '', status: 'active' })}
+                  onClick={() => setFormData({ goalId: '', goalType: '', targetAmount: '', currentAmount: '0', deadline: '', status: GOAL_STATUS.ACTIVE })}
                 >
                   Cancel
                 </button>
@@ -267,8 +247,8 @@ export default function Goals() {
           ) : (
             goals.map((goal) => {
               const progress = calculateProgress(goal.current_amount, goal.target_amount);
-              const isCompleted = progress >= 100 || goal.status === 'completed';
-              const badgeColor = getStatusBadgeColor(goal.status);
+              const isCompleted = progress >= 100 || goal.status === GOAL_STATUS.COMPLETED;
+              const badgeColor = getGoalStatusColor(goal.status);
               
               return (
                 <div key={goal.goal_id} className="glass-panel" style={{ 

@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { apiUrl, authHeaders, API_CONFIG } from '../config/api';
+import { handleApiError, parseApiResponse } from '../config/errors';
+import {
+  AAOIFI_CASH_THRESHOLD,
+  AAOIFI_DEBT_THRESHOLD,
+  AAOIFI_INTEREST_THRESHOLD,
+  INTEREST_RATIO_VISUAL_MULTIPLIER,
+  getComplianceStatusColor
+} from '../constants/shariah.constants';
 
 export default function ComplianceChecker() {
   const { user } = useAuth();
@@ -19,34 +28,18 @@ export default function ComplianceChecker() {
     setResult(null);
 
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch('http://localhost:8080/api/shariah/compliance', {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.COMPLIANCE), {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: authHeaders(true),
         body: JSON.stringify({ ...formData, userId: user.uid })
       });
-      const data = await res.json();
-      
-      // Artificial delay for dramatic "screening" effect
-      setTimeout(() => {
-        setResult(data);
-        setIsLoading(false);
-      }, 1000);
-
+      const data = await parseApiResponse(res);
+      setResult(data);
     } catch (err) {
-      setResult({ success: false, message: 'Failed to access Shariah rules engine.' });
+      setResult({ success: false, message: handleApiError(err, 'Failed to access Shariah rules engine.') });
+    } finally {
       setIsLoading(false);
     }
-  };
-
-  const getStatusColor = (status) => {
-    if (status === 'Compliant') return 'var(--success)';
-    if (status === 'Non-Compliant') return 'var(--danger)';
-    if (status === 'Doubtful') return '#F59E0B';
-    return 'var(--text-main)';
   };
 
   return (
@@ -91,7 +84,7 @@ export default function ComplianceChecker() {
         <div style={{ 
           animation: 'authFadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
           padding: '32px', 
-          borderTop: `4px solid ${getStatusColor(result.status)}`, 
+          borderTop: `4px solid ${getComplianceStatusColor(result.status)}`, 
           borderRadius: '16px', 
           background: 'var(--surface)',
           boxShadow: '0 20px 40px rgba(0,0,0,0.05)',
@@ -99,7 +92,7 @@ export default function ComplianceChecker() {
           overflow: 'hidden'
         }}>
           {/* Subtle background glow based on status */}
-          <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '200px', height: '200px', background: getStatusColor(result.status), filter: 'blur(100px)', opacity: '0.1', zIndex: 0 }}></div>
+          <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '200px', height: '200px', background: getComplianceStatusColor(result.status), filter: 'blur(100px)', opacity: '0.1', zIndex: 0 }}></div>
           
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
@@ -110,21 +103,21 @@ export default function ComplianceChecker() {
               <div style={{ 
                 padding: '8px 16px', 
                 borderRadius: '30px', 
-                background: `${getStatusColor(result.status)}15`, 
-                color: getStatusColor(result.status),
+                background: `${getComplianceStatusColor(result.status)}15`, 
+                color: getComplianceStatusColor(result.status),
                 fontWeight: 'bold',
                 fontSize: '18px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                boxShadow: `0 4px 12px ${getStatusColor(result.status)}30`
+                boxShadow: `0 4px 12px ${getComplianceStatusColor(result.status)}30`
               }}>
                 {result.status === 'Compliant' ? '✅' : result.status === 'Non-Compliant' ? '❌' : '⚠️'}
                 {result.status}
               </div>
             </div>
 
-            <p style={{ color: 'var(--text-main)', lineHeight: '1.6', fontSize: '15px', padding: '16px', background: 'var(--background)', borderRadius: '12px', marginBottom: '24px', borderLeft: `3px solid ${getStatusColor(result.status)}` }}>
+            <p style={{ color: 'var(--text-main)', lineHeight: '1.6', fontSize: '15px', padding: '16px', background: 'var(--background)', borderRadius: '12px', marginBottom: '24px', borderLeft: `3px solid ${getComplianceStatusColor(result.status)}` }}>
               {result.explanation}
             </p>
             
@@ -139,25 +132,25 @@ export default function ComplianceChecker() {
                   <RatioBar 
                     label="Interest-bearing Debt / Total Assets" 
                     value={result.ratios.debtRatio} 
-                    threshold={33} 
-                    isDanger={result.ratios.debtRatio > 33} 
+                    threshold={AAOIFI_DEBT_THRESHOLD} 
+                    isDanger={result.ratios.debtRatio > AAOIFI_DEBT_THRESHOLD} 
                   />
 
                   {/* Interest Income Ratio */}
                   <RatioBar 
                     label="Prohibited Interest Income / Total Revenue" 
                     value={result.ratios.interestIncomeRatio} 
-                    threshold={5} 
-                    isDanger={result.ratios.interestIncomeRatio > 5} 
-                    multiplier={10} // scale up visually
+                    threshold={AAOIFI_INTEREST_THRESHOLD} 
+                    isDanger={result.ratios.interestIncomeRatio > AAOIFI_INTEREST_THRESHOLD} 
+                    multiplier={INTEREST_RATIO_VISUAL_MULTIPLIER}
                   />
 
                   {/* Cash Ratio */}
                   <RatioBar 
                     label="Liquid Cash & Receivables / Total Assets" 
                     value={result.ratios.cashRatio} 
-                    threshold={50} 
-                    isDanger={result.ratios.cashRatio > 50} 
+                    threshold={AAOIFI_CASH_THRESHOLD} 
+                    isDanger={result.ratios.cashRatio > AAOIFI_CASH_THRESHOLD} 
                   />
                 </div>
               </div>

@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import AdminTabs from '../components/AdminTabs';
+import { apiUrl, authHeaders, API_CONFIG } from '../config/api';
+import { handleApiError, parseApiResponse } from '../config/errors';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -20,7 +23,6 @@ export default function AdminDashboard() {
   });
 
   const [statusMsg, setStatusMsg] = useState(null);
-  const API_URL = 'http://localhost:8080/api';
 
   useEffect(() => {
     if (user && user.userType !== 'Admin') {
@@ -31,25 +33,23 @@ export default function AdminDashboard() {
   const fetchAdminData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('itqan_token');
-      const headers = { 'Authorization': `Bearer ${token}` };
-
       const [usersRes, logsRes, rulesRes] = await Promise.all([
-        fetch(`${API_URL}/admin/users`, { headers }),
-        fetch(`${API_URL}/admin/logs`, { headers }),
-        fetch(`${API_URL}/shariah/rules`, { headers })
+        fetch(`${apiUrl(API_CONFIG.ENDPOINTS.ADMIN)}/users`, { headers: authHeaders() }),
+        fetch(`${apiUrl(API_CONFIG.ENDPOINTS.ADMIN)}/logs`, { headers: authHeaders() }),
+        fetch(apiUrl(API_CONFIG.ENDPOINTS.SHARIAH_RULES), { headers: authHeaders() })
       ]);
 
       const [usersData, logsData, rulesData] = await Promise.all([
-        usersRes.json(), logsRes.json(), rulesRes.json()
+        parseApiResponse(usersRes), parseApiResponse(logsRes), parseApiResponse(rulesRes)
       ]);
 
-      if (usersData.success) setUsers(usersData.data);
-      if (logsData.success) setLogs(logsData.data);
-      if (rulesData.success) setRules(rulesData.data);
+      setUsers(usersData.data);
+      setLogs(logsData.data);
+      setRules(rulesData.data);
 
     } catch (err) {
       console.error('Failed to load admin data:', err);
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Failed to load admin data.') });
     } finally {
       setLoading(false);
     }
@@ -66,21 +66,16 @@ export default function AdminDashboard() {
     if (!window.confirm(`WARNING: Are you sure you want to change this user's security clearance to ${newRole.toUpperCase()}?`)) return;
 
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(`${API_URL}/admin/users/role`, {
+      const res = await fetch(`${apiUrl(API_CONFIG.ENDPOINTS.ADMIN)}/users/role`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: authHeaders(true),
         body: JSON.stringify({ userId, role: newRole })
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: 'Security clearance updated successfully!' });
-        fetchAdminData();
-      } else {
-        setStatusMsg({ type: 'error', text: data.message });
-      }
+      await parseApiResponse(res);
+      setStatusMsg({ type: 'success', text: 'Security clearance updated successfully!' });
+      fetchAdminData();
     } catch (err) {
-      setStatusMsg({ type: 'error', text: 'Server error updating role.' });
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Server error updating role.') });
     }
   };
 
@@ -89,42 +84,32 @@ export default function AdminDashboard() {
     setStatusMsg({ type: 'loading', text: 'Deploying rule to engine...' });
 
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(`${API_URL}/admin/rules`, {
+      const res = await fetch(`${apiUrl(API_CONFIG.ENDPOINTS.ADMIN)}/rules`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: authHeaders(true),
         body: JSON.stringify(ruleForm)
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: ruleForm.ruleId ? 'Compliance rule updated!' : 'New compliance rule deployed!' });
-        setRuleForm({ ruleId: '', category: 'prohibited-sector', description: '', sourceReference: '' });
-        fetchAdminData();
-      } else {
-        setStatusMsg({ type: 'error', text: data.message });
-      }
+      await parseApiResponse(res);
+      setStatusMsg({ type: 'success', text: ruleForm.ruleId ? 'Compliance rule updated!' : 'New compliance rule deployed!' });
+      setRuleForm({ ruleId: '', category: 'prohibited-sector', description: '', sourceReference: '' });
+      fetchAdminData();
     } catch (err) {
-      setStatusMsg({ type: 'error', text: 'Server error saving rule.' });
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Server error saving rule.') });
     }
   };
 
   const handleRuleDelete = async (ruleId) => {
     if (!window.confirm('CRITICAL ACTION: Terminate this compliance rule permanently?')) return;
     try {
-      const token = localStorage.getItem('itqan_token');
-      const res = await fetch(`${API_URL}/admin/rules/${ruleId}`, {
+      const res = await fetch(`${apiUrl(API_CONFIG.ENDPOINTS.ADMIN)}/rules/${ruleId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: authHeaders()
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMsg({ type: 'success', text: 'Rule terminated.' });
-        fetchAdminData();
-      } else {
-        setStatusMsg({ type: 'error', text: data.message });
-      }
+      await parseApiResponse(res);
+      setStatusMsg({ type: 'success', text: 'Rule terminated.' });
+      fetchAdminData();
     } catch (err) {
-      setStatusMsg({ type: 'error', text: 'Server error deleting rule.' });
+      setStatusMsg({ type: 'error', text: handleApiError(err, 'Server error deleting rule.') });
     }
   };
 
@@ -168,31 +153,13 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Modern Tabs */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '32px', borderBottom: '2px solid var(--glass-border)', paddingBottom: '0' }}>
-        {['users', 'rules', 'logs'].map(tab => (
-          <button 
-            key={tab}
-            onClick={() => { setActiveTab(tab); setStatusMsg(null); }}
-            style={{ 
-              padding: '16px 24px', 
-              background: 'transparent', 
-              border: 'none', 
-              borderBottom: activeTab === tab ? '3px solid var(--primary-color)' : '3px solid transparent',
-              color: activeTab === tab ? 'var(--primary-color)' : 'var(--text-muted)',
-              fontSize: '15px',
-              fontWeight: '700',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              marginBottom: '-2px'
-            }}
-          >
-            {tab === 'users' ? '👥 Access Control' : tab === 'rules' ? '⚖️ Compliance Engine' : '📡 Audit Logs'}
-          </button>
-        ))}
-      </div>
+      <AdminTabs
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setStatusMsg(null);
+        }}
+      />
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '60px' }}>
