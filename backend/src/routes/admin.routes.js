@@ -4,6 +4,10 @@ const db = require('../db');
 const authMiddleware = require('../middleware/auth.middleware');
 const adminMiddleware = require('../middleware/admin.middleware');
 const auditService = require('../services/auditService');
+const { SHARIAH_RULE_CATEGORIES } = require('../constants/shariah.constants');
+
+const VALID_ROLES = ['Admin', 'User'];
+const USER_ID_PATTERN = /^[a-zA-Z0-9-]{1,128}$/;
 
 // Apply middleware stack: first verify authentication, then verify admin role
 router.use(authMiddleware);
@@ -40,11 +44,10 @@ router.post('/users/role', async (req, res) => {
     });
   }
 
-  // Verify role is valid
-  if (!['Admin', 'User'].includes(role)) {
+  if (!USER_ID_PATTERN.test(userId) || !VALID_ROLES.includes(role)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid role. Must be "Admin" or "User".'
+      message: 'Invalid input.'
     });
   }
 
@@ -101,14 +104,7 @@ router.post('/rules', async (req, res) => {
     });
   }
 
-  // Verify category is valid
-  const validCategories = [
-    'prohibited-sector',
-    'doubtful-sector',
-    'financial-ratio',
-    'zakat'
-  ];
-  if (!validCategories.includes(category)) {
+  if (!SHARIAH_RULE_CATEGORIES.includes(category)) {
     return res.status(400).json({
       success: false,
       message: 'Invalid category.'
