@@ -1,3 +1,9 @@
+/**
+ * @file server.js
+ * @description Express application entry point for the ITQAN Backend API.
+ * Configures middleware, mounts all route modules, and starts the HTTP server.
+ */
+
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -24,6 +30,11 @@ app.use('/api/shariah', shariahRoutes);
 app.use('/api/goals', goalsRoutes);
 app.use('/api/admin', adminRoutes);
 
+/**
+ * Health check endpoint.
+ * @route GET /health
+ * @returns {object} 200 - JSON with status and message fields
+ */
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', message: 'ITQAN Backend API is running' });
 });
